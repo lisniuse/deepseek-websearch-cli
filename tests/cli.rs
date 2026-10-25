@@ -47,10 +47,15 @@ fn help_is_localized() {
 #[test]
 fn search_without_api_key_fails_with_hint() {
     let dir = tempfile::tempdir().unwrap();
-    let output = run_isolated(&["search", "hello"], dir.path());
+    // 固定语言，避免断言依赖运行机器的系统语言
+    let output = run_isolated(&["--locale", "en", "search", "hello"], dir.path());
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("API Key"), "标准错误输出: {stderr}");
+    let expected = deepseek_websearch_cli::i18n::t("err.no_api_key");
+    assert!(
+        stderr.contains(expected),
+        "标准错误输出: {stderr}\n期望包含: {expected}"
+    );
 }
 
 #[test]
@@ -68,10 +73,16 @@ fn count_out_of_range_is_rejected_before_request() {
 #[test]
 fn fetch_rejects_non_http_url() {
     let dir = tempfile::tempdir().unwrap();
-    let output = run_isolated(&["fetch", "ftp://example.com"], dir.path());
+    let output = run_isolated(
+        &["--locale", "en", "fetch", "ftp://example.com"],
+        dir.path(),
+    );
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("http"), "标准错误输出: {stderr}");
+    assert!(
+        stderr.contains(deepseek_websearch_cli::i18n::t("err.url_scheme")),
+        "标准错误输出: {stderr}"
+    );
 }
 
 #[test]
