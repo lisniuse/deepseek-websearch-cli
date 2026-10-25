@@ -65,7 +65,13 @@ pub struct Cli {
     pub no_color: bool,
 
     /// Interface language: auto, en or zh
-    #[arg(long, global = true, value_name = "LANG", default_value = "auto")]
+    #[arg(
+        long,
+        global = true,
+        value_name = "LANG",
+        default_value = "auto",
+        value_parser = ["auto", "en", "zh"]
+    )]
     pub locale: String,
 
     /// Print debug logs to stderr
@@ -142,10 +148,47 @@ pub enum ConfigCommand {
         #[arg(long)]
         env_file: bool,
     },
+    /// Store the interface language in the config file
+    SetLocale {
+        /// Language to store: auto, en or zh
+        #[arg(value_name = "LANG", value_parser = ["auto", "en", "zh"])]
+        lang: String,
+        /// Write the language into ~/.deepseek-websearch-cli/.env instead of the config file
+        #[arg(long)]
+        env_file: bool,
+    },
     /// Show the current configuration (the key is masked)
     Show,
     /// Print the paths of the config file and the .env file
     Path,
+}
+
+/// 界面语言的来源。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocaleSource {
+    /// `--locale` 命令行参数
+    Cli,
+    /// `DWS_LOCALE` 环境变量
+    Env,
+    /// `.env` 文件
+    EnvFile,
+    /// 配置文件
+    ConfigFile,
+    /// 系统语言
+    System,
+}
+
+impl LocaleSource {
+    /// 本地化的来源说明。
+    fn label(self) -> &'static str {
+        match self {
+            LocaleSource::Cli => i18n::t("cfg.locale_source.cli"),
+            LocaleSource::Env => i18n::t("cfg.locale_source.env"),
+            LocaleSource::EnvFile => i18n::t("cfg.locale_source.env_file"),
+            LocaleSource::ConfigFile => i18n::t("cfg.locale_source.config"),
+            LocaleSource::System => i18n::t("cfg.locale_source.system"),
+        }
+    }
 }
 
 /// 构造已经本地化帮助信息的 clap 命令。
@@ -187,6 +230,11 @@ pub fn build_command() -> clap::Command {
                         .mut_arg("key", |a| a.help(i18n::t("arg.key")))
                         .mut_arg("env_file", |a| a.help(i18n::t("arg.env_file")))
                 })
+                .mut_subcommand("set-locale", |c| {
+                    c.about(i18n::t("cmd.config.set_locale"))
+                        .mut_arg("lang", |a| a.help(i18n::t("arg.lang")))
+                        .mut_arg("env_file", |a| a.help(i18n::t("arg.env_file")))
+                })
                 .mut_subcommand("show", |c| c.about(i18n::t("cmd.config.show")))
                 .mut_subcommand("path", |c| c.about(i18n::t("cmd.config.path")))
         });
@@ -195,7 +243,13 @@ pub fn build_command() -> clap::Command {
 }
 
 /// 解析命令行参数（使用本地化后的命令定义）。
+///
+/// 语言在解析参数之前就已确定，这样 `--help` 的输出也是本地化的。
 pub fn parse_args() -> Cli {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let (locale, _) = resolve_locale(&args);
+    i18n::force(locale);
+
     match build_command().try_get_matches() {
         Ok(matches) => match Cli::from_arg_matches(&matches) {
             Ok(cli) => cli,
@@ -216,6 +270,30 @@ pub fn parse_args() -> Cli {
             }
         }
     }
+}
+
+/// 按优先级解析界面语言：
+/// `--locale` > `DWS_LOCALE` 环境变量 > `.env` 文件 > 配置文件 > 系统语言。
+fn resolve_locale(args: &[String]) -> (i18n::Locale, LocaleSource) {
+    if let Some(locale) = i18n::locale_from_args(args) {
+        return (locale, LocaleSource::Cli);
+    }
+    if let Some(locale) = std::env::var("DWS_LOCALE")
+        .ok()
+        .as_deref()
+        .and_then(i18n::parse_locale)
+    {
+        return (locale, LocaleSource::Env);
+    }
+    let env_file = config::load_env_file();
+    if let Some(locale) = env_file.get("DWS_LOCALE").and_then(i18n::parse_locale) {
+        return (locale, LocaleSource::EnvFile);
+    }
+    let cfg = config::load();
+    if let Some(locale) = cfg.locale.as_deref().and_then(i18n::parse_locale) {
+        return (locale, LocaleSource::ConfigFile);
+    }
+    (i18n::detect(), LocaleSource::System)
 }
 
 /// 把 clap 内置的英文标题替换成当前语言（英文环境下原样返回）。
@@ -317,6 +395,22 @@ fn run_config(cmd: &ConfigCommand) -> Result<()> {
             };
             println!("{} {}", i18n::t("cfg.saved"), path.display());
         }
+        ConfigCommand::SetLocale { lang, env_file } => {
+            let lang = lang.trim().to_lowercase();
+            if lang != "auto" && i18n::parse_locale(&lang).is_none() {
+                bail!("{}", i18n::t("err.invalid_locale"));
+            }
+            let path = if *env_file {
+                let mut updates = BTreeMap::new();
+                updates.insert("DWS_LOCALE".to_string(), lang);
+                config::update_env_file(&config::env_file_path(), &updates)?
+            } else {
+                let mut cfg = config::load();
+                cfg.locale = Some(lang);
+                config::save(&cfg)?
+            };
+            println!("{} {}", i18n::t("cfg.saved"), path.display());
+        }
         ConfigCommand::Show => {
             let cfg = config::load();
             let env_file = config::load_env_file();
@@ -334,6 +428,12 @@ fn run_config(cmd: &ConfigCommand) -> Result<()> {
                 "{}: {}",
                 i18n::t("cfg.base_url"),
                 resolve_base_url(None, cfg.base_url.as_deref(), &env_file)
+            );
+            println!(
+                "{}: {} ({})",
+                i18n::t("cfg.locale"),
+                i18n::current().code(),
+                current_locale_source().label()
             );
 
             println!("{}: {}", i18n::t("cfg.env_file"), env_file.path.display());
@@ -365,6 +465,12 @@ fn run_config(cmd: &ConfigCommand) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// 当前界面语言的来源。
+fn current_locale_source() -> LocaleSource {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    resolve_locale(&args).1
 }
 
 /// 构造 HTTP 客户端。

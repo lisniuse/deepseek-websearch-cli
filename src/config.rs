@@ -23,6 +23,9 @@ pub struct Config {
     /// API Base URL。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
+    /// 界面语言：`auto` / `en` / `zh`，默认跟随系统语言。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locale: Option<String>,
 }
 
 /// `.env` 文件内容。
@@ -268,11 +271,13 @@ mod tests {
         let cfg = Config {
             api_key: Some("sk-test".into()),
             base_url: Some("https://example.com".into()),
+            locale: Some("zh".into()),
         };
         save_to(&cfg, &path).unwrap();
         let loaded = load_from(&path);
         assert_eq!(loaded.api_key.as_deref(), Some("sk-test"));
         assert_eq!(loaded.base_url.as_deref(), Some("https://example.com"));
+        assert_eq!(loaded.locale.as_deref(), Some("zh"));
     }
 
     #[test]

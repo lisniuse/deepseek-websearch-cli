@@ -90,6 +90,30 @@ dws config show        # the key is masked
 dws config path        # print the config file and .env paths
 ```
 
+The config file holds `api_key`, `base_url` and `locale`:
+
+```toml
+api_key = "sk-..."
+base_url = "https://api.deepseek.com"
+locale = "zh"
+```
+
+### Interface language
+
+The interface language is resolved from the first source that provides one:
+
+1. `--locale <auto\|en\|zh>` command line flag
+2. `DWS_LOCALE` environment variable
+3. `DWS_LOCALE` in the `.env` file
+4. `locale` in the config file
+5. The system language (`zh-*` selects 简体中文, everything else selects English)
+
+```bash
+dws config set-locale zh              # writes locale = "zh" to the config file
+dws config set-locale zh --env-file   # writes DWS_LOCALE=zh to the .env file
+dws config set-locale auto            # back to following the system language
+```
+
 ## Usage
 
 ### Web search
@@ -160,7 +184,7 @@ The `query` is passed through to the search service unchanged, so it supports:
 
 ### Localization
 
-The interface language follows the operating system locale (`zh-*` selects 简体中文, everything else selects English) and can be overridden:
+The interface language follows the operating system locale by default and can be overridden per run or permanently (see [Interface language](#interface-language)):
 
 ```bash
 dws --locale zh --help

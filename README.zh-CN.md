@@ -90,6 +90,30 @@ dws config show        # 显示当前配置（Key 会被掩码）
 dws config path        # 打印配置文件与 .env 文件的路径
 ```
 
+配置文件里可以保存 `api_key`、`base_url` 与 `locale`：
+
+```toml
+api_key = "sk-..."
+base_url = "https://api.deepseek.com"
+locale = "zh"
+```
+
+### 界面语言
+
+界面语言按以下顺序查找，命中即止：
+
+1. `--locale <auto|en|zh>` 命令行参数
+2. 环境变量 `DWS_LOCALE`
+3. `.env` 文件中的 `DWS_LOCALE`
+4. 配置文件中的 `locale`
+5. 系统语言（`zh-*` 选择简体中文，其它选择英文）
+
+```bash
+dws config set-locale zh              # 把 locale = "zh" 写入配置文件
+dws config set-locale zh --env-file   # 把 DWS_LOCALE=zh 写入 .env 文件
+dws config set-locale auto            # 恢复为跟随系统语言
+```
+
 ## 用法
 
 ### 网页搜索
@@ -160,7 +184,7 @@ dws fetch "https://example.com/article" | head -50
 
 ### 多语言
 
-界面语言跟随操作系统语言（`zh-*` 选择简体中文，其它选择英文），也可以手动覆盖：
+界面语言默认跟随操作系统语言，也可以临时覆盖或永久写入配置（见 [界面语言](#界面语言)）：
 
 ```bash
 dws --locale zh --help

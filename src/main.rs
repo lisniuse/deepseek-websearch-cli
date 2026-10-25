@@ -1,14 +1,12 @@
 //! DeepSeek 网页搜索与抓取 CLI 入口。
 
 use deepseek_websearch_cli::cli;
-use deepseek_websearch_cli::i18n;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // 先确定语言，再解析参数，这样 `--help` 等输出也能本地化。
-    i18n::init_from_args(std::env::args().skip(1));
     enable_ansi();
 
+    // `parse_args` 会先确定界面语言，再解析参数，这样 `--help` 等输出也是本地化的。
     let cli = cli::parse_args();
     cli::run(cli).await
 }

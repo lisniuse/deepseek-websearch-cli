@@ -157,3 +157,89 @@ fn api_key_is_read_from_the_env_file() {
         "API Key 泄露了: {stdout}"
     );
 }
+
+#[test]
+fn locale_can_be_set_in_the_config_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_dir = dir.path().join("config");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(config_dir.join("config.toml"), "locale = \"en\"\n").unwrap();
+
+    let output = run_isolated(&["--help"], dir.path());
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Commands:"), "应使用英文帮助: {stdout}");
+}
+
+#[test]
+fn locale_can_be_set_in_the_env_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let env_dir = dir.path().join("env");
+    std::fs::create_dir_all(&env_dir).unwrap();
+    std::fs::write(env_dir.join(".env"), "DWS_LOCALE=zh\n").unwrap();
+
+    let output = run_isolated(&["--help"], dir.path());
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("命令："), "应使用中文帮助: {stdout}");
+}
+
+#[test]
+fn locale_flag_overrides_the_config_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_dir = dir.path().join("config");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(config_dir.join("config.toml"), "locale = \"zh\"\n").unwrap();
+
+    let output = run_isolated(&["--locale", "en", "--help"], dir.path());
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Commands:"), "命令行参数应优先: {stdout}");
+}
+
+#[test]
+fn config_set_locale_writes_the_config_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = run_isolated(&["config", "set-locale", "en"], dir.path());
+    assert!(
+        output.status.success(),
+        "标准错误输出: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let config_file = dir.path().join("config").join("config.toml");
+    let content = std::fs::read_to_string(&config_file).expect("应生成配置文件");
+    assert!(content.contains("locale = \"en\""), "配置内容: {content}");
+
+    // 写入后生效
+    let output = run_isolated(&["--help"], dir.path());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Commands:"), "应使用英文帮助: {stdout}");
+}
+
+#[test]
+fn config_set_locale_can_write_the_env_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = run_isolated(&["config", "set-locale", "zh", "--env-file"], dir.path());
+    assert!(
+        output.status.success(),
+        "标准错误输出: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let env_file = dir.path().join("env").join(".env");
+    let content = std::fs::read_to_string(&env_file).expect("应生成 .env 文件");
+    assert!(content.contains("DWS_LOCALE=zh"), ".env 内容: {content}");
+}
+
+#[test]
+fn config_show_reports_the_effective_locale() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = run_isolated(&["config", "show"], dir.path());
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("zh-CN") || stdout.contains("en-US"),
+        "应显示当前语言: {stdout}"
+    );
+}

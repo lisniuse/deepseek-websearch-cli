@@ -70,7 +70,7 @@ pub fn force(locale: Locale) -> Locale {
     current()
 }
 
-/// 解析 `--locale` 参数值。
+/// 解析语言配置值（`auto` 返回 `None`，表示交给系统语言决定）。
 pub fn parse_locale(value: &str) -> Option<Locale> {
     match value.trim().to_ascii_lowercase().as_str() {
         "zh" | "zh-cn" | "zh-hans" | "zh_cn" | "cn" | "chinese" => Some(Locale::Zh),
@@ -81,7 +81,7 @@ pub fn parse_locale(value: &str) -> Option<Locale> {
 
 /// 从命令行参数中预扫描 `--locale`，用于在 clap 解析前确定语言
 /// （否则 `--help` 的输出会早于参数解析）。
-pub fn init_from_args<I, S>(args: I) -> Locale
+pub fn locale_from_args<I, S>(args: I) -> Option<Locale>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
@@ -97,11 +97,11 @@ where
         };
         if let Some(value) = value {
             if let Some(locale) = parse_locale(&value) {
-                return force(locale);
+                return Some(locale);
             }
         }
     }
-    detect()
+    None
 }
 
 /// 按当前语言取字符串。
@@ -220,6 +220,14 @@ i18n_table! {
         "Store an API key in the config file",
         "把 API Key 保存到配置文件"
     ),
+    "cmd.config.set_locale" => (
+        "Store the interface language in the config file",
+        "把界面语言保存到配置文件"
+    ),
+    "arg.lang" => (
+        "Language to store: auto, en or zh",
+        "要保存的语言：auto、en 或 zh"
+    ),
     "cmd.config.show" => (
         "Show the current configuration (the key is masked)",
         "显示当前配置（API Key 会被掩码）"
@@ -295,6 +303,10 @@ i18n_table! {
     "err.api_key_empty" => (
         "The API key must not be empty",
         "API Key 不能为空"
+    ),
+    "err.invalid_locale" => (
+        "Invalid language, expected auto, en or zh",
+        "语言取值无效，应为 auto、en 或 zh"
     ),
     "err.api_key_invalid_header" => (
         "The API key contains characters that are not allowed in a header",
@@ -427,6 +439,30 @@ i18n_table! {
     "cfg.base_url" => (
         "base_url",
         "base_url"
+    ),
+    "cfg.locale" => (
+        "locale",
+        "界面语言"
+    ),
+    "cfg.locale_source.cli" => (
+        "command line",
+        "命令行参数"
+    ),
+    "cfg.locale_source.env" => (
+        "DWS_LOCALE environment variable",
+        "环境变量 DWS_LOCALE"
+    ),
+    "cfg.locale_source.env_file" => (
+        ".env file",
+        ".env 文件"
+    ),
+    "cfg.locale_source.config" => (
+        "config file",
+        "配置文件"
+    ),
+    "cfg.locale_source.system" => (
+        "system language",
+        "系统语言"
     ),
     "cfg.not_set" => (
         "(not set)",
