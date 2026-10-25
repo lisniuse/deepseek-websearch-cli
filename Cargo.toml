@@ -2,7 +2,7 @@
 name = "deepseek-websearch-cli"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.88"
 description = "DeepSeek 网页搜索与抓取 API 的命令行工具 (Search & Fetch)"
 license = "MIT"
 repository = "https://github.com/lisniuse/deepseek-websearch-cli"

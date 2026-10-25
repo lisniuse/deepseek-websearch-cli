@@ -23,6 +23,8 @@ Both use the same DeepSeek Bearer authentication. The full field reference is in
 
 ### From source
 
+Requires Rust 1.88 or newer.
+
 ```bash
 cargo install --path .
 
