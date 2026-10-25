@@ -1,0 +1,46 @@
+[package]
+name = "deepseek-websearch-cli"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "DeepSeek 网页搜索与抓取 API 的命令行工具 (Search & Fetch)"
+license = "MIT"
+repository = "https://github.com/lisniuse/deepseek-websearch-cli"
+readme = "README.md"
+keywords = ["deepseek", "search", "cli", "websearch", "fetch"]
+categories = ["command-line-utilities"]
+
+[lib]
+name = "deepseek_websearch_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "dws"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+colored = "3"
+dirs = "6"
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "rustls-tls",
+    "charset",
+    "http2",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile = "3"
+wiremock = "0.6"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
