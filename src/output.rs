@@ -1,12 +1,14 @@
 //! 结果渲染：文本 / JSON / Markdown 三种输出格式。
 
+use clap::builder::PossibleValue;
 use clap::ValueEnum;
 use colored::Colorize;
 
+use crate::i18n;
 use crate::model::{FetchResponse, SearchResponse, SearchResult};
 
 /// 输出格式。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Format {
     /// 人类可读的终端文本。
     Text,
@@ -14,6 +16,40 @@ pub enum Format {
     Json,
     /// Markdown（适合粘贴到笔记或交给模型）。
     Markdown,
+}
+
+const FORMAT_VARIANTS: [Format; 3] = [Format::Text, Format::Json, Format::Markdown];
+
+impl Format {
+    /// 命令行中的取值。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Format::Text => "text",
+            Format::Json => "json",
+            Format::Markdown => "markdown",
+        }
+    }
+}
+
+impl std::fmt::Display for Format {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl ValueEnum for Format {
+    fn value_variants<'a>() -> &'a [Self] {
+        &FORMAT_VARIANTS
+    }
+
+    fn to_possible_value(&self) -> Option<PossibleValue> {
+        let key = match self {
+            Format::Text => "fmt.text",
+            Format::Json => "fmt.json",
+            Format::Markdown => "fmt.markdown",
+        };
+        Some(PossibleValue::new(self.as_str()).help(i18n::t(key)))
+    }
 }
 
 /// 文本渲染的开关。
@@ -70,7 +106,7 @@ pub fn render_fetch(response: &FetchResponse, format: Format) -> String {
 
 fn render_search_text(response: &SearchResponse, opts: &RenderOptions) -> String {
     if response.results.is_empty() {
-        return "未找到匹配结果。".to_string();
+        return i18n::t("out.no_results").to_string();
     }
     let mut out = String::new();
     for (idx, item) in response.results.iter().enumerate() {
@@ -111,7 +147,7 @@ fn render_search_text(response: &SearchResponse, opts: &RenderOptions) -> String
 
 fn render_search_markdown(response: &SearchResponse, opts: &RenderOptions) -> String {
     if response.results.is_empty() {
-        return "未找到匹配结果。".to_string();
+        return i18n::t("out.no_results").to_string();
     }
     let mut out = String::new();
     for (idx, item) in response.results.iter().enumerate() {
@@ -147,12 +183,12 @@ fn meta_line(item: &SearchResult) -> String {
     if let Some(date) = item.date.as_ref().filter(|s| !s.is_empty()) {
         parts.push(date.clone());
     }
-    parts.push(format!("排序 {}", item.rerank_score));
+    parts.push(format!("{} {}", i18n::t("out.score"), item.rerank_score));
     if item.authority >= 0 {
         parts.push(if item.is_authoritative() {
-            format!("极权威 {}", item.authority)
+            format!("{} {}", i18n::t("out.high_authority"), item.authority)
         } else {
-            format!("权威 {}", item.authority)
+            format!("{} {}", i18n::t("out.authority"), item.authority)
         });
     }
     parts.join(" · ")
@@ -200,8 +236,8 @@ mod tests {
         assert!(text.contains("https://example.com/a"));
         assert!(text.contains("短摘要"));
         assert!(text.contains("Example"));
-        assert!(text.contains("排序 2.4"));
-        assert!(text.contains("权威 3"));
+        assert!(text.contains(&format!("{} 2.4", i18n::t("out.score"))));
+        assert!(text.contains(&format!("{} 3", i18n::t("out.high_authority"))));
     }
 
     #[test]
@@ -240,7 +276,7 @@ mod tests {
     fn empty_results_message() {
         let empty = SearchResponse { results: vec![] };
         let text = render_search(&empty, Format::Text, &RenderOptions::default());
-        assert!(text.contains("未找到匹配结果"));
+        assert!(text.contains(i18n::t("out.no_results")));
     }
 
     #[test]

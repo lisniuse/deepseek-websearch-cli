@@ -1,135 +1,205 @@
-# dws — DeepSeek 网页搜索与抓取 CLI
+# dws — DeepSeek Web Search & Fetch CLI
 
-对 [DeepSeek 官方网页搜索与抓取 API](https://api-docs.deepseek.com/zh-cn/guides/search/) 的命令行封装：
+**[English](README.md) | [简体中文](README.zh-CN.md)**
 
-| API | Endpoint | 说明 |
+A command line wrapper for DeepSeek's official [web search & fetch APIs](https://api-docs.deepseek.com/zh-cn/guides/search/):
+
+| API | Endpoint | Description |
 | --- | --- | --- |
-| Search | `POST https://api.deepseek.com/v1/tools/search` | 按关键词搜索网页，返回结构化结果 |
-| Fetch | `POST https://api.deepseek.com/v1/tools/fetch` | 抓取单个网页，返回 Markdown 正文 |
+| Search | `POST https://api.deepseek.com/v1/tools/search` | Search the web by query, returns structured results |
+| Fetch | `POST https://api.deepseek.com/v1/tools/fetch` | Fetch a single web page, returns its Markdown body |
 
-两者共用 DeepSeek 的 Bearer 鉴权。接口字段的完整说明见 [`docs/api.md`](docs/api.md)。
+Both use the same DeepSeek Bearer authentication. The full field reference is in [`docs/api.md`](docs/api.md).
 
-## 安装
+## Features
+
+- **Three config sources** — API key from `--api-key`, the `DEEPSEEK_API_KEY` environment variable, `~/.deepseek-websearch-cli/.env`, or the config file.
+- **Bilingual interface** — automatically follows the system language (English / 简体中文), overridable with `--locale`.
+- **Cross-platform** — Windows, macOS and Linux, with a CI matrix covering all three.
+- **Pipe friendly** — `text`, `json` and `markdown` output formats.
+- **Reliable** — exponential backoff on 408/429/5xx, friendly messages for every documented error code.
+
+## Install
+
+### From source
 
 ```bash
 cargo install --path .
 
-# 或本地开发
+# or build locally
 cargo build --release
 ./target/release/dws --help
 ```
 
-## 配置 API Key
+### Prebuilt binaries
 
-按以下顺序查找，先命中者生效：
+Download the archive for your platform from the [Releases page](https://github.com/lisniuse/deepseek-websearch-cli/releases) and put `dws` (or `dws.exe`) on your `PATH`.
 
-1. `--api-key <KEY>` 命令行参数
-2. 环境变量 `DEEPSEEK_API_KEY`
-3. 配置文件（`dws config path` 查看路径，Windows 为 `%APPDATA%\deepseek-websearch\config.toml`）
+### Platform notes
+
+| Platform | Config file | `.env` file |
+| --- | --- | --- |
+| Linux | `$XDG_CONFIG_HOME/deepseek-websearch/config.toml` | `~/.deepseek-websearch-cli/.env` |
+| macOS | `~/Library/Application Support/deepseek-websearch/config.toml` | `~/.deepseek-websearch-cli/.env` |
+| Windows | `%APPDATA%\deepseek-websearch\config.toml` | `%USERPROFILE%\.deepseek-websearch-cli\.env` |
+
+`dws config path` prints the resolved paths on your machine.
+
+> Advanced: set `DWS_CONFIG_DIR` / `DWS_ENV_DIR` to relocate the config file and the `.env` file (useful for testing or non-standard deployments).
+
+## Configuration
+
+The API key is resolved from the first source that provides one:
+
+1. `--api-key <KEY>` command line flag
+2. `DEEPSEEK_API_KEY` environment variable
+3. `~/.deepseek-websearch-cli/.env` file
+4. The config file (`%APPDATA%\deepseek-websearch\config.toml` on Windows)
+
+### Option A — environment variable
 
 ```bash
-export DEEPSEEK_API_KEY="sk-..."       # 方式二
-dws config set-key "sk-..."            # 方式三，写入配置文件
-dws config show                        # 查看当前配置（Key 会被掩码）
+export DEEPSEEK_API_KEY="sk-..."          # Linux / macOS
+setx DEEPSEEK_API_KEY "sk-..."            # Windows (PowerShell: $env:DEEPSEEK_API_KEY = "sk-...")
 ```
 
-## 用法
+### Option B — `.env` file
 
-### 网页搜索
+Create `~/.deepseek-websearch-cli/.env`:
 
 ```bash
-dws search "DeepSeek V4 模型 发布"
+mkdir -p ~/.deepseek-websearch-cli
+cat > ~/.deepseek-websearch-cli/.env <<'EOF'
+DEEPSEEK_API_KEY=sk-...
+EOF
+```
+
+`DEEPSEEK_BASE_URL` is supported in the same file. The parser understands `KEY=VALUE`, `export KEY=VALUE`, `#` comments and quoted values.
+
+You can also let the CLI write it for you:
+
+```bash
+dws config set-key "sk-..." --env-file
+```
+
+### Option C — config file
+
+```bash
+dws config set-key "sk-..."
+dws config show        # the key is masked
+dws config path        # print the config file and .env paths
+```
+
+## Usage
+
+### Web search
+
+```bash
+dws search "DeepSeek V4 release"
 dws search "DeepSeek" --count 20
 dws search "DeepSeek site:github.com OR site:huggingface.co lang:zh after:2025-01-01"
-dws search "DeepSeek" --content              # 同时抓取并展示网页正文
-dws search "DeepSeek" --summary              # 展示 600~800 字的长摘要
-dws search "DeepSeek" --links-only           # 只看标题与链接
-dws search "DeepSeek" --format json          # 结构化输出，便于管道处理
-dws search "DeepSeek" --format markdown      # Markdown 输出，便于粘贴给模型
-echo "DeepSeek" | dws search -               # 从标准输入读取搜索词
+dws search "DeepSeek" --content              # also fetch and show the page body
+dws search "DeepSeek" --summary              # show the 600-800 char long summary
+dws search "DeepSeek" --links-only           # titles and links only
+dws search "DeepSeek" --format json          # structured output for pipelines
+dws search "DeepSeek" --format markdown      # Markdown, ready to paste into a model
+echo "DeepSeek" | dws search -               # read the query from stdin
 ```
 
-文本输出示例：
+Text output:
 
 ```
-1. ★ DeepSeek V4 模型发布
+1. ★ DeepSeek V4 model released
    https://example.com/deepseek-v4
-   Example News · 2026-06-01T00:00:00+00:00 · 排序 2.4 · 极权威 3
-   DeepSeek V4 已上线，支持工具调用与长上下文。
+   Example News · 2026-06-01T00:00:00+00:00 · score 2.4 · highly authoritative 3
+   DeepSeek V4 is now available, with tool calling and long-context support.
 ```
 
-`★` 表示 `rerank_score >= 1.5`（官方定义的优质结果）；`极权威` 表示 `authority >= 3`。
+`★` marks a high quality result (`rerank_score >= 1.5`), `highly authoritative` marks `authority >= 3`.
 
-### 网页抓取
+### Web fetch
 
 ```bash
 dws fetch "https://example.com/article"
 dws fetch "https://example.com/article" --format markdown
 ```
 
-输出为页面标题 + Markdown 正文，可直接管道给其他工具：
+Output is the page title plus its Markdown body, ready to pipe:
 
 ```bash
 dws fetch "https://example.com/article" | head -50
 ```
 
-### 搜索语法
+### Search syntax
 
-`query` 会原样传给搜索服务，支持：
+The `query` is passed through to the search service unchanged, so it supports:
 
-| 操作符 | 示例 | 说明 |
+| Operator | Example | Description |
 | --- | --- | --- |
-| `site:` | `DeepSeek site:github.com` | 限定站点，多个用空格分隔并以 `OR` 连接 |
-| `-site:` | `DeepSeek -site:example.com` | 排除站点 |
-| `-` | `DeepSeek -广告` | 排除含指定关键词的网页 |
-| `-"..."` | `DeepSeek -"release notes"` | 排除指定短语 |
-| `"..."` | `DeepSeek "精确短语"` | 精确匹配短语 |
-| `lang:` | `DeepSeek lang:zh,en` | 限定语言，逗号分隔 |
-| `after:` | `DeepSeek after:2025-01-01` | 限定发布日期之后 |
-| `before:` | `DeepSeek before:2026-06-01` | 限定发布日期之前 |
+| `site:` | `DeepSeek site:github.com` | Restrict to a site; several sites are space separated and joined with `OR` |
+| `-site:` | `DeepSeek -site:example.com` | Exclude a site |
+| `-` | `DeepSeek -ads` | Exclude pages containing a keyword |
+| `-"..."` | `DeepSeek -"release notes"` | Exclude pages containing a phrase |
+| `"..."` | `DeepSeek "exact phrase"` | Match a phrase exactly |
+| `lang:` | `DeepSeek lang:zh,en` | Restrict by language, comma separated |
+| `after:` | `DeepSeek after:2025-01-01` | Only pages published after a date |
+| `before:` | `DeepSeek before:2026-06-01` | Only pages published before a date |
 
-### 全局参数
+### Global options
 
-| 参数 | 默认值 | 说明 |
+| Option | Default | Description |
 | --- | --- | --- |
-| `--api-key <KEY>` | — | API Key（等价于环境变量 `DEEPSEEK_API_KEY`） |
-| `--base-url <URL>` | `https://api.deepseek.com` | 接口地址，可用环境变量 `DEEPSEEK_BASE_URL` 覆盖 |
-| `--timeout <SEC>` | `30` | 单次请求超时（秒） |
-| `--retries <N>` | `2` | 遇到 408/429/5xx 的重试次数（指数退避，尊重 `Retry-After`） |
-| `--format <text\|json\|markdown>` | `text` | 输出格式 |
-| `--no-color` | — | 关闭彩色输出 |
-| `-v, --verbose` | — | 打印调试日志到 stderr |
+| `--api-key <KEY>` | — | API key (same as `DEEPSEEK_API_KEY`) |
+| `--base-url <URL>` | `https://api.deepseek.com` | API base URL (also read from `DEEPSEEK_BASE_URL`) |
+| `--timeout <SEC>` | `30` | Per-request timeout in seconds |
+| `--retries <N>` | `2` | Retries on 408/429/5xx, with exponential backoff honouring `Retry-After` |
+| `--format <text\|json\|markdown>` | `text` | Output format |
+| `--locale <auto\|en\|zh>` | `auto` | Interface language; `auto` follows the system language |
+| `--no-color` | — | Disable colored output |
+| `-v, --verbose` | — | Print debug logs to stderr |
 
-## 计费提醒
+### Localization
 
-Search / Fetch 均按**成功请求次数**计费：每 1,000 次成功请求 5 元。空结果、失败、超时不计费；`count` 只影响返回条数，不影响单次请求价格。账号级限速为 Search 100 QPS、Fetch 25 QPS，超限返回 HTTP 429。
-
-因此建议先小批量验证，不要把 `dws search` 放在高频循环里。
-
-## 开发
+The interface language follows the operating system locale (`zh-*` selects 简体中文, everything else selects English) and can be overridden:
 
 ```bash
-cargo test          # 单元测试 + 集成测试（集成测试使用 wiremock 模拟接口，不发真实请求）
+dws --locale zh --help
+dws --locale en search "DeepSeek"
+```
+
+> Note: messages produced by clap itself (for example `error: invalid value`) are still in English.
+
+## Billing
+
+Search and Fetch are billed **per successful request**: 5 CNY per 1,000 requests. Empty results, failures and timeouts are not billed, and `count` only affects how many results come back — not the price. The account level limits are 100 QPS for Search and 25 QPS for Fetch; exceeding them returns HTTP 429.
+
+So try a few queries first instead of putting `dws search` in a tight loop.
+
+## Development
+
+```bash
+cargo test          # unit tests + integration tests (wiremock, no real requests)
 cargo clippy --all-targets
 cargo fmt
 ```
 
-目录结构：
+Layout:
 
 ```
 src/
-  lib.rs      库入口（暴露各模块，便于集成测试）
-  main.rs     二进制入口
-  cli.rs      命令行参数定义与命令分发
-  client.rs   HTTP 客户端：鉴权、重试、错误解析
-  config.rs   API Key / Base URL 的本地配置
-  model.rs    请求与响应模型
-  output.rs   文本 / JSON / Markdown 渲染
+  lib.rs      library entry point (exposes the modules for integration tests)
+  main.rs     binary entry point
+  cli.rs      argument definitions, localized help, command dispatch
+  client.rs   HTTP client: auth, retries, error translation
+  config.rs   config file + .env file handling
+  i18n.rs     locale detection and the translation tables
+  model.rs    request/response models
+  output.rs   text / JSON / Markdown rendering
 tests/
-  cli.rs      命令行行为测试
-  http.rs     针对 mock 服务的 HTTP 层测试
+  cli.rs      command line behaviour tests
+  http.rs     HTTP layer tests against a mock server
 ```
 
-## 许可
+## License
 
 [MIT](LICENSE) © 2026 lisniuse

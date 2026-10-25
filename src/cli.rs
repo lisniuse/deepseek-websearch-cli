@@ -1,33 +1,34 @@
 //! 命令行参数定义与命令分发。
 
+use std::collections::BTreeMap;
 use std::io::Read;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Subcommand};
 
 use crate::client::{
     validate_fetch_url, validate_ori_question, validate_query, Client, DEFAULT_BASE_URL,
 };
 use crate::config;
+use crate::i18n;
 use crate::model::SearchRequest;
 use crate::output::{render_fetch, render_search, Format, RenderOptions};
 
 /// DeepSeek 网页搜索与抓取命令行工具。
-#[derive(Debug, Parser)]
+#[derive(Debug, clap::Parser)]
 #[command(
     name = "dws",
     version,
-    about = "DeepSeek 网页搜索与抓取 API 命令行工具",
-    long_about = "封装 DeepSeek 官方的网页搜索（/v1/tools/search）与网页抓取（/v1/tools/fetch）接口。\n\
-                  API Key 依次从 --api-key、环境变量 DEEPSEEK_API_KEY、配置文件读取。",
+    about = "DeepSeek web search & fetch command line tool",
+    long_about = "Wraps DeepSeek's official web search and web fetch APIs.",
     propagate_version = true
 )]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
 
-    /// DeepSeek API Key（默认读取环境变量 DEEPSEEK_API_KEY）
+    /// DeepSeek API key (defaults to the DEEPSEEK_API_KEY environment variable)
     #[arg(
         long,
         global = true,
@@ -37,7 +38,7 @@ pub struct Cli {
     )]
     pub api_key: Option<String>,
 
-    /// API Base URL（默认 https://api.deepseek.com，可用配置文件覆盖）
+    /// API base URL (defaults to https://api.deepseek.com)
     #[arg(
         long,
         global = true,
@@ -47,23 +48,27 @@ pub struct Cli {
     )]
     pub base_url: String,
 
-    /// 单次请求超时时间（秒）
+    /// Per-request timeout in seconds
     #[arg(long, global = true, default_value_t = 30, value_name = "SEC")]
     pub timeout: u64,
 
-    /// 遇到 408/429/5xx 时的重试次数
+    /// Retry attempts on 408/429/5xx responses
     #[arg(long, global = true, default_value_t = 2, value_name = "N")]
     pub retries: u32,
 
-    /// 输出格式
-    #[arg(long, global = true, value_enum, default_value_t = Format::Text)]
+    /// Output format
+    #[arg(long, global = true, value_enum, default_value = "text")]
     pub format: Format,
 
-    /// 关闭彩色输出
+    /// Disable colored output
     #[arg(long, global = true)]
     pub no_color: bool,
 
-    /// 打印调试日志
+    /// Interface language: auto, en or zh
+    #[arg(long, global = true, value_name = "LANG", default_value = "auto")]
+    pub locale: String,
+
+    /// Print debug logs to stderr
     #[arg(short, long, global = true)]
     pub verbose: bool,
 }
@@ -71,11 +76,11 @@ pub struct Cli {
 /// 子命令。
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// 网页搜索：按关键词搜索网页
+    /// Web search: find web pages matching a query
     Search(SearchArgs),
-    /// 网页抓取：抓取单个网页并返回 Markdown 正文
+    /// Web fetch: download a single page as Markdown
     Fetch(FetchArgs),
-    /// 配置管理
+    /// Manage the local configuration
     #[command(subcommand)]
     Config(ConfigCommand),
 }
@@ -83,31 +88,36 @@ pub enum Command {
 /// `dws search` 的参数。
 #[derive(Debug, clap::Args)]
 pub struct SearchArgs {
-    /// 搜索词，支持 site: / -site: / "精确短语" / lang: / after: / before: 等语法
+    /// Search query
     #[arg(value_name = "QUERY")]
     pub query: String,
 
-    /// 返回条数（1～50）
-    #[arg(short = 'n', long, default_value_t = 10, value_parser = clap::value_parser!(u8).range(1..=50))]
+    /// Number of results to return (1-50)
+    #[arg(
+        short = 'n',
+        long,
+        default_value_t = 10,
+        value_parser = clap::value_parser!(u8).range(1..=50)
+    )]
     pub count: u8,
 
-    /// 请求网页正文，并在文本输出中一并展示
+    /// Also fetch and display the page body
     #[arg(long)]
     pub content: bool,
 
-    /// 触发搜索的原始问题（1～128 字符），有助于理解搜索意图
+    /// The original user question behind the search (1-128 characters)
     #[arg(long, value_name = "TEXT")]
     pub ori_question: Option<String>,
 
-    /// 用于优先返回本地化搜索结果的 IP 地址
+    /// IP address used to prioritize localized results
     #[arg(long, value_name = "IP")]
     pub localization: Option<String>,
 
-    /// 只显示标题与链接
+    /// Only show titles and links
     #[arg(short = 'l', long)]
     pub links_only: bool,
 
-    /// 显示长摘要（600～800 字符）而不是短摘要
+    /// Show the long summary instead of the short snippet
     #[arg(short = 's', long)]
     pub summary: bool,
 }
@@ -115,7 +125,7 @@ pub struct SearchArgs {
 /// `dws fetch` 的参数。
 #[derive(Debug, clap::Args)]
 pub struct FetchArgs {
-    /// 要抓取的网页地址（HTTP/HTTPS）
+    /// Web page URL to fetch (HTTP/HTTPS)
     #[arg(value_name = "URL")]
     pub url: String,
 }
@@ -123,16 +133,112 @@ pub struct FetchArgs {
 /// `dws config` 的子命令。
 #[derive(Debug, Subcommand)]
 pub enum ConfigCommand {
-    /// 保存 API Key 到本地配置文件
+    /// Store an API key in the config file
     SetKey {
-        /// 要保存的 API Key
+        /// API key to store
         #[arg(value_name = "KEY")]
         key: String,
+        /// Write the key into ~/.deepseek-websearch-cli/.env instead of the config file
+        #[arg(long)]
+        env_file: bool,
     },
-    /// 显示当前配置（API Key 会被掩码）
+    /// Show the current configuration (the key is masked)
     Show,
-    /// 显示配置文件路径
+    /// Print the paths of the config file and the .env file
     Path,
+}
+
+/// 构造已经本地化帮助信息的 clap 命令。
+pub fn build_command() -> clap::Command {
+    let mut cmd = Cli::command();
+    cmd = cmd
+        .about(i18n::t("cli.about"))
+        .long_about(i18n::t("cli.long_about"))
+        .mut_arg("api_key", |a| a.help(i18n::t("arg.api_key")))
+        .mut_arg("base_url", |a| a.help(i18n::t("arg.base_url")))
+        .mut_arg("timeout", |a| a.help(i18n::t("arg.timeout")))
+        .mut_arg("retries", |a| a.help(i18n::t("arg.retries")))
+        .mut_arg("format", |a| a.help(i18n::t("arg.format")))
+        .mut_arg("no_color", |a| a.help(i18n::t("arg.no_color")))
+        .mut_arg("locale", |a| a.help(i18n::t("arg.locale")))
+        .mut_arg("verbose", |a| a.help(i18n::t("arg.verbose")));
+
+    cmd = cmd
+        .mut_subcommand("search", |c| {
+            c.about(i18n::t("cmd.search"))
+                .long_about(i18n::t("cmd.search.long"))
+                .mut_arg("query", |a| a.help(i18n::t("arg.query")))
+                .mut_arg("count", |a| a.help(i18n::t("arg.count")))
+                .mut_arg("content", |a| a.help(i18n::t("arg.content")))
+                .mut_arg("ori_question", |a| a.help(i18n::t("arg.ori_question")))
+                .mut_arg("localization", |a| a.help(i18n::t("arg.localization")))
+                .mut_arg("links_only", |a| a.help(i18n::t("arg.links_only")))
+                .mut_arg("summary", |a| a.help(i18n::t("arg.summary")))
+        })
+        .mut_subcommand("fetch", |c| {
+            c.about(i18n::t("cmd.fetch"))
+                .long_about(i18n::t("cmd.fetch.long"))
+                .mut_arg("url", |a| a.help(i18n::t("arg.url")))
+        })
+        .mut_subcommand("config", |c| {
+            c.about(i18n::t("cmd.config"))
+                .mut_subcommand("set-key", |c| {
+                    c.about(i18n::t("cmd.config.set_key"))
+                        .mut_arg("key", |a| a.help(i18n::t("arg.key")))
+                        .mut_arg("env_file", |a| a.help(i18n::t("arg.env_file")))
+                })
+                .mut_subcommand("show", |c| c.about(i18n::t("cmd.config.show")))
+                .mut_subcommand("path", |c| c.about(i18n::t("cmd.config.path")))
+        });
+
+    cmd
+}
+
+/// 解析命令行参数（使用本地化后的命令定义）。
+pub fn parse_args() -> Cli {
+    match build_command().try_get_matches() {
+        Ok(matches) => match Cli::from_arg_matches(&matches) {
+            Ok(cli) => cli,
+            Err(err) => err.exit(),
+        },
+        Err(err) => {
+            use clap::error::ErrorKind;
+            match err.kind() {
+                ErrorKind::DisplayHelp => {
+                    print!("{}", localize_clap_text(&err.to_string()));
+                    std::process::exit(0);
+                }
+                ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
+                    print!("{}", localize_clap_text(&err.to_string()));
+                    std::process::exit(2);
+                }
+                _ => err.exit(),
+            }
+        }
+    }
+}
+
+/// 把 clap 内置的英文标题替换成当前语言（英文环境下原样返回）。
+fn localize_clap_text(text: &str) -> String {
+    if i18n::current() == i18n::Locale::En {
+        return text.to_string();
+    }
+    let mut out = text.to_string();
+    for (from, key) in [
+        ("Usage:", "clap.usage"),
+        ("Commands:", "clap.commands"),
+        ("Options:", "clap.options"),
+        ("Arguments:", "clap.arguments"),
+        (
+            "Print this message or the help of the given subcommand(s)",
+            "clap.help_subcommand",
+        ),
+        ("Print help", "clap.print_help"),
+        ("Print version", "clap.print_version"),
+    ] {
+        out = out.replace(from, i18n::t(key));
+    }
+    out
 }
 
 /// 入口：解析参数并执行对应命令。
@@ -140,6 +246,10 @@ pub async fn run(cli: Cli) -> Result<()> {
     init_tracing(cli.verbose);
     if cli.no_color {
         colored::control::set_override(false);
+    }
+    // `--locale` 已在参数解析前生效，这里再确认一次，保持语义一致。
+    if let Some(locale) = i18n::parse_locale(&cli.locale) {
+        i18n::force(locale);
     }
 
     match &cli.command {
@@ -166,7 +276,7 @@ async fn run_search(cli: &Cli, args: &SearchArgs) -> Result<()> {
     request.localization = args.localization.clone();
     request.need_content = Some(args.content);
 
-    tracing::debug!(?request, base_url = client.base_url(), "发送搜索请求");
+    tracing::debug!(?request, base_url = client.base_url(), "search request");
     let response = client.search(&request).await?;
 
     let opts = RenderOptions {
@@ -183,7 +293,7 @@ async fn run_fetch(cli: &Cli, args: &FetchArgs) -> Result<()> {
     let api_key = resolve_api_key(cli)?;
     let client = build_client(cli, api_key)?;
 
-    tracing::debug!(url = %args.url, base_url = client.base_url(), "发送抓取请求");
+    tracing::debug!(url = %args.url, base_url = client.base_url(), "fetch request");
     let response = client.fetch(&args.url).await?;
     println!("{}", render_fetch(&response, cli.format));
     Ok(())
@@ -191,30 +301,67 @@ async fn run_fetch(cli: &Cli, args: &FetchArgs) -> Result<()> {
 
 fn run_config(cmd: &ConfigCommand) -> Result<()> {
     match cmd {
-        ConfigCommand::SetKey { key } => {
+        ConfigCommand::SetKey { key, env_file } => {
             let key = key.trim().to_string();
             if key.is_empty() {
-                bail!("API Key 不能为空");
+                bail!("{}", i18n::t("err.api_key_empty"));
             }
-            let mut cfg = config::load();
-            cfg.api_key = Some(key);
-            let path = config::save(&cfg)?;
-            println!("API Key 已保存到 {}", path.display());
+            let path = if *env_file {
+                let mut updates = BTreeMap::new();
+                updates.insert("DEEPSEEK_API_KEY".to_string(), key);
+                config::update_env_file(&config::env_file_path(), &updates)?
+            } else {
+                let mut cfg = config::load();
+                cfg.api_key = Some(key);
+                config::save(&cfg)?
+            };
+            println!("{} {}", i18n::t("cfg.saved"), path.display());
         }
         ConfigCommand::Show => {
             let cfg = config::load();
-            println!("配置文件: {}", config::config_path().display());
+            let env_file = config::load_env_file();
+
+            println!(
+                "{}: {}",
+                i18n::t("cfg.file"),
+                config::config_path().display()
+            );
             match cfg.api_key.as_deref() {
-                Some(key) => println!("api_key:  {}", config::mask_key(key)),
-                None => println!("api_key:  (未设置)"),
+                Some(key) => println!("{}: {}", i18n::t("cfg.api_key"), config::mask_key(key)),
+                None => println!("{}: {}", i18n::t("cfg.api_key"), i18n::t("cfg.not_set")),
             }
-            println!("base_url: {}", resolve_base_url(cfg.base_url.as_deref()));
+            println!(
+                "{}: {}",
+                i18n::t("cfg.base_url"),
+                resolve_base_url(None, cfg.base_url.as_deref(), &env_file)
+            );
+
+            println!("{}: {}", i18n::t("cfg.env_file"), env_file.path.display());
+            match env_file.get("DEEPSEEK_API_KEY") {
+                Some(_) => println!(
+                    "{}",
+                    i18n::tf(
+                        "cfg.env_file_present",
+                        &[("path", &env_file.path.display().to_string())]
+                    )
+                ),
+                None => println!("{}: {}", i18n::t("cfg.api_key"), i18n::t("cfg.not_set")),
+            }
             if std::env::var("DEEPSEEK_API_KEY").is_ok() {
-                println!("环境变量 DEEPSEEK_API_KEY: 已设置（优先于配置文件）");
+                println!("{}", i18n::t("cfg.env_var_present"));
             }
         }
         ConfigCommand::Path => {
-            println!("{}", config::config_path().display());
+            println!(
+                "{}: {}",
+                i18n::t("cfg.file"),
+                config::config_path().display()
+            );
+            println!(
+                "{}: {}",
+                i18n::t("cfg.env_file"),
+                config::env_file_path().display()
+            );
         }
     }
     Ok(())
@@ -222,7 +369,8 @@ fn run_config(cmd: &ConfigCommand) -> Result<()> {
 
 /// 构造 HTTP 客户端。
 fn build_client(cli: &Cli, api_key: String) -> Result<Client> {
-    let base_url = resolve_base_url(Some(cli.base_url.as_str()));
+    let env_file = config::load_env_file();
+    let base_url = resolve_base_url(Some(cli.base_url.as_str()), None, &env_file);
     Client::new(
         base_url,
         &api_key,
@@ -231,7 +379,7 @@ fn build_client(cli: &Cli, api_key: String) -> Result<Client> {
     )
 }
 
-/// 解析 API Key：命令行/环境变量 > 配置文件。
+/// 解析 API Key：`--api-key` > 环境变量 > `.env` 文件 > 配置文件。
 fn resolve_api_key(cli: &Cli) -> Result<String> {
     if let Some(key) = cli
         .api_key
@@ -240,6 +388,16 @@ fn resolve_api_key(cli: &Cli) -> Result<String> {
         .filter(|k| !k.is_empty())
     {
         return Ok(key.to_string());
+    }
+    if let Ok(key) = std::env::var("DEEPSEEK_API_KEY") {
+        let key = key.trim();
+        if !key.is_empty() {
+            return Ok(key.to_string());
+        }
+    }
+    let env_file = config::load_env_file();
+    if let Some(key) = env_file.get("DEEPSEEK_API_KEY") {
+        return Ok(key.trim().to_string());
     }
     let cfg = config::load();
     if let Some(key) = cfg
@@ -250,24 +408,31 @@ fn resolve_api_key(cli: &Cli) -> Result<String> {
     {
         return Ok(key.to_string());
     }
-    bail!(
-        "未找到 API Key：请设置环境变量 DEEPSEEK_API_KEY，\
-         或使用 --api-key，或运行 `dws config set-key <KEY>`"
-    )
+    bail!("{}", i18n::t("err.no_api_key"))
 }
 
-/// 解析 Base URL：命令行 > 配置文件 > 默认值。
-fn resolve_base_url(cli_value: Option<&str>) -> String {
+/// 解析 Base URL：`--base-url` > 环境变量 > `.env` 文件 > 配置文件 > 默认值。
+fn resolve_base_url(
+    cli_value: Option<&str>,
+    cfg_value: Option<&str>,
+    env_file: &config::EnvFile,
+) -> String {
     if let Some(value) = cli_value.map(str::trim).filter(|v| !v.is_empty()) {
         return value.trim_end_matches('/').to_string();
     }
-    let cfg = config::load();
-    cfg.base_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .map(|v| v.trim_end_matches('/').to_string())
-        .unwrap_or_else(|| DEFAULT_BASE_URL.to_string())
+    if let Ok(value) = std::env::var("DEEPSEEK_BASE_URL") {
+        let value = value.trim();
+        if !value.is_empty() {
+            return value.trim_end_matches('/').to_string();
+        }
+    }
+    if let Some(value) = env_file.get("DEEPSEEK_BASE_URL") {
+        return value.trim().trim_end_matches('/').to_string();
+    }
+    if let Some(value) = cfg_value.map(str::trim).filter(|v| !v.is_empty()) {
+        return value.trim_end_matches('/').to_string();
+    }
+    DEFAULT_BASE_URL.to_string()
 }
 
 /// 支持用 `-` 从标准输入读取搜索词。
@@ -278,7 +443,7 @@ fn resolve_query(query: &str) -> Result<String> {
     let mut buffer = String::new();
     std::io::stdin()
         .read_to_string(&mut buffer)
-        .context("读取标准输入失败")?;
+        .context("failed to read stdin")?;
     Ok(buffer.trim().to_string())
 }
 
@@ -301,11 +466,12 @@ fn init_tracing(verbose: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::CommandFactory;
+    use clap::{CommandFactory, Parser, ValueEnum};
 
     #[test]
     fn cli_definition_is_valid() {
         Cli::command().debug_assert();
+        build_command().debug_assert();
     }
 
     #[test]
@@ -367,12 +533,47 @@ mod tests {
     }
 
     #[test]
+    fn locale_flag_is_accepted() {
+        let cli = Cli::try_parse_from(["dws", "search", "q", "--locale", "zh"]).unwrap();
+        assert_eq!(cli.locale, "zh");
+    }
+
+    #[test]
+    fn format_variants_expose_names() {
+        assert_eq!(Format::Text.as_str(), "text");
+        assert_eq!(Format::Json.as_str(), "json");
+        assert_eq!(Format::Markdown.as_str(), "markdown");
+        assert_eq!(Format::value_variants().len(), 3);
+    }
+
+    #[test]
     fn base_url_resolution_prefers_cli() {
-        let cli =
-            Cli::try_parse_from(["dws", "search", "q", "--base-url", "https://x.dev/"]).unwrap();
+        let env_file = config::EnvFile::default();
         assert_eq!(
-            resolve_base_url(Some(cli.base_url.as_str())),
+            resolve_base_url(Some("https://x.dev/"), None, &env_file),
             "https://x.dev"
+        );
+        assert_eq!(
+            resolve_base_url(Some(""), Some("https://cfg.dev"), &env_file),
+            "https://cfg.dev"
+        );
+        assert_eq!(resolve_base_url(None, None, &env_file), DEFAULT_BASE_URL);
+    }
+
+    #[test]
+    fn base_url_resolution_reads_env_file() {
+        let mut values = BTreeMap::new();
+        values.insert(
+            "DEEPSEEK_BASE_URL".to_string(),
+            "https://env.dev".to_string(),
+        );
+        let env_file = config::EnvFile {
+            path: std::path::PathBuf::new(),
+            values,
+        };
+        assert_eq!(
+            resolve_base_url(Some(""), None, &env_file),
+            "https://env.dev"
         );
     }
 }

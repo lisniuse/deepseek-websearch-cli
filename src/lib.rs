@@ -9,5 +9,6 @@
 pub mod cli;
 pub mod client;
 pub mod config;
+pub mod i18n;
 pub mod model;
 pub mod output;

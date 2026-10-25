@@ -8,6 +8,7 @@ use reqwest::StatusCode;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
+use crate::i18n;
 use crate::model::{ApiErrorEnvelope, FetchRequest, FetchResponse, SearchRequest, SearchResponse};
 
 /// 默认 Base URL。
@@ -38,13 +39,13 @@ impl Client {
         max_retries: u32,
     ) -> Result<Self> {
         if api_key.trim().is_empty() {
-            bail!("API Key 不能为空");
+            bail!("{}", i18n::t("err.api_key_empty"));
         }
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(
             AUTHORIZATION,
             reqwest::header::HeaderValue::from_str(&format!("Bearer {api_key}"))
-                .context("API Key 含有非法字符")?,
+                .context(i18n::t("err.api_key_invalid_header"))?,
         );
         headers.insert(
             CONTENT_TYPE,
@@ -55,7 +56,7 @@ impl Client {
             .default_headers(headers)
             .timeout(timeout)
             .build()
-            .context("创建 HTTP 客户端失败")?;
+            .context(i18n::t("err.create_client"))?;
 
         Ok(Self {
             http,
@@ -88,7 +89,7 @@ impl Client {
     /// 发送 POST JSON 请求并解析响应。
     async fn post_json<T: DeserializeOwned>(&self, path: &str, body: &impl Serialize) -> Result<T> {
         let url = format!("{}{}", self.base_url, path);
-        let payload = serde_json::to_vec(body).context("序列化请求体失败")?;
+        let payload = serde_json::to_vec(body).context(i18n::t("err.serialize_request"))?;
 
         let mut attempt: u32 = 0;
         loop {
@@ -98,13 +99,13 @@ impl Client {
                 .body(payload.clone())
                 .send()
                 .await
-                .with_context(|| format!("请求 {url} 失败"))?;
+                .with_context(|| i18n::tf("err.request_failed", &[("url", &url)]))?;
 
             let status = response.status();
             if status.is_success() {
-                let text = response.text().await.context("读取响应体失败")?;
+                let text = response.text().await.context(i18n::t("err.read_body"))?;
                 return serde_json::from_str(&text).with_context(|| {
-                    format!("解析响应 JSON 失败，原始内容: {}", truncate(&text, 300))
+                    i18n::tf("err.parse_response", &[("body", &truncate(&text, 300))])
                 });
             }
 
@@ -151,16 +152,16 @@ fn describe_error(status: StatusCode, body: &str) -> String {
         _ => truncate(body, 300),
     };
     let hint = match status {
-        StatusCode::BAD_REQUEST => "请求头或请求体不合法",
-        StatusCode::UNAUTHORIZED => "API Key 缺失或无效",
-        StatusCode::PAYMENT_REQUIRED => "账号余额不足，请充值",
-        StatusCode::FORBIDDEN => "请求被安全策略拒绝",
-        StatusCode::NOT_FOUND => "未能获取可用的网页内容（URL 不可用、被拦截或无正文）",
-        StatusCode::REQUEST_TIMEOUT => "读取请求体超时",
-        StatusCode::PAYLOAD_TOO_LARGE => "请求体超过大小限制",
-        StatusCode::TOO_MANY_REQUESTS => "超过 QPS 限制",
-        _ if status.is_server_error() => "服务端错误",
-        _ => "请求失败",
+        StatusCode::BAD_REQUEST => i18n::t("http.400"),
+        StatusCode::UNAUTHORIZED => i18n::t("http.401"),
+        StatusCode::PAYMENT_REQUIRED => i18n::t("http.402"),
+        StatusCode::FORBIDDEN => i18n::t("http.403"),
+        StatusCode::NOT_FOUND => i18n::t("http.404"),
+        StatusCode::REQUEST_TIMEOUT => i18n::t("http.408"),
+        StatusCode::PAYLOAD_TOO_LARGE => i18n::t("http.413"),
+        StatusCode::TOO_MANY_REQUESTS => i18n::t("http.429"),
+        _ if status.is_server_error() => i18n::t("http.5xx"),
+        _ => i18n::t("http.default"),
     };
     if detail.is_empty() {
         format!("HTTP {}: {}", status.as_u16(), hint)
@@ -181,7 +182,7 @@ fn truncate(text: &str, max_chars: usize) -> String {
         out.push(ch);
     }
     if out.is_empty() {
-        out.push_str("(空响应体)");
+        out.push_str(i18n::t("err.empty_body"));
     }
     out
 }
@@ -190,10 +191,13 @@ fn truncate(text: &str, max_chars: usize) -> String {
 pub fn validate_query(query: &str) -> Result<()> {
     let len = query.chars().count();
     if len == 0 || query.trim().is_empty() {
-        bail!("搜索词不能为空");
+        bail!("{}", i18n::t("err.query_empty"));
     }
     if len > 128 {
-        bail!("搜索词过长：{len} 个字符，最大 128 个字符");
+        bail!(
+            "{}",
+            i18n::tf("err.query_too_long", &[("len", &len.to_string())])
+        );
     }
     Ok(())
 }
@@ -202,10 +206,13 @@ pub fn validate_query(query: &str) -> Result<()> {
 pub fn validate_ori_question(value: &str) -> Result<()> {
     let len = value.chars().count();
     if len == 0 {
-        bail!("ori_question 不能为空");
+        bail!("{}", i18n::t("err.ori_question_empty"));
     }
     if len > 128 {
-        bail!("ori_question 过长：{len} 个字符，最大 128 个字符");
+        bail!(
+            "{}",
+            i18n::tf("err.ori_question_too_long", &[("len", &len.to_string())])
+        );
     }
     Ok(())
 }
@@ -214,24 +221,27 @@ pub fn validate_ori_question(value: &str) -> Result<()> {
 pub fn validate_fetch_url(url: &str) -> Result<()> {
     let len = url.chars().count();
     if len == 0 {
-        bail!("URL 不能为空");
+        bail!("{}", i18n::t("err.url_empty"));
     }
     if len > 8192 {
-        bail!("URL 过长：{len} 个字符，最大 8192 个字符");
+        bail!(
+            "{}",
+            i18n::tf("err.url_too_long", &[("len", &len.to_string())])
+        );
     }
     let rest = if let Some(r) = url.strip_prefix("https://") {
         r
     } else if let Some(r) = url.strip_prefix("http://") {
         r
     } else {
-        bail!("URL 必须以 http:// 或 https:// 开头");
+        bail!("{}", i18n::t("err.url_scheme"));
     };
     let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
     if authority.is_empty() {
-        bail!("URL 必须包含 host");
+        bail!("{}", i18n::t("err.url_host"));
     }
     if authority.contains('@') {
-        bail!("URL 不能携带用户名或密码");
+        bail!("{}", i18n::t("err.url_userinfo"));
     }
     Ok(())
 }
@@ -290,13 +300,13 @@ mod tests {
     #[test]
     fn truncate_marks_cut() {
         assert_eq!(truncate("abcdef", 3), "abc…");
-        assert_eq!(truncate("  ", 3), "(空响应体)");
+        assert_eq!(truncate("  ", 3), i18n::t("err.empty_body"));
     }
 
     #[test]
     fn client_rejects_empty_key() {
         let err = Client::new(DEFAULT_BASE_URL, "  ", Duration::from_secs(1), 0).unwrap_err();
-        assert!(err.to_string().contains("API Key"));
+        assert_eq!(err.to_string(), i18n::t("err.api_key_empty"));
     }
 
     #[test]

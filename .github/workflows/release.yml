@@ -1,0 +1,91 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish binaries
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: tar.gz
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04-arm
+            archive: tar.gz
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive: zip
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools (Linux arm64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          sudo update-alternatives --install /usr/bin/aarch64-linux-gnu-gcc \
+            aarch64-linux-gnu-gcc /usr/bin/aarch64-linux-gnu-gcc-12
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist
+          BIN="target/${{ matrix.target }}/release/dws"
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            cp "$BIN.exe" "dist/dws-${{ matrix.target }}.exe"
+          else
+            cp "$BIN" "dist/dws-${{ matrix.target }}"
+          fi
+          cd dist
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            zip -r "dws-${{ matrix.target }}.zip" ./*
+          else
+            tar -czf "dws-${{ matrix.target }}.tar.gz" ./*
+          fi
+          rm -f dws-${{ matrix.target }} dws-${{ matrix.target }}.exe
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dws-${{ matrix.target }}
+          path: dist/*
+
+  publish:
+    name: Create GitHub release
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true

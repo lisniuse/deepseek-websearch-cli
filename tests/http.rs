@@ -111,7 +111,10 @@ async fn unauthorized_reports_api_key_problem() {
         .expect_err("应当失败");
     let message = err.to_string();
     assert!(message.contains("401"), "实际错误: {message}");
-    assert!(message.contains("API Key"), "实际错误: {message}");
+    assert!(
+        message.contains(deepseek_websearch_cli::i18n::t("http.401")),
+        "实际错误: {message}"
+    );
 }
 
 #[tokio::test]
@@ -133,7 +136,10 @@ async fn rate_limit_is_retried_then_reported() {
         .expect_err("应当失败");
     let message = err.to_string();
     assert!(message.contains("429"), "实际错误: {message}");
-    assert!(message.contains("QPS"), "实际错误: {message}");
+    assert!(
+        message.contains(deepseek_websearch_cli::i18n::t("http.429")),
+        "实际错误: {message}"
+    );
 }
 
 #[tokio::test]
